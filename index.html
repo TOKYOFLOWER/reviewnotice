@@ -260,9 +260,7 @@
             <div class="input-wrapper">
               <span class="input-prefix">rakuten.co.jp/</span>
               <input type="text" id="shopId" name="shopId" class="has-prefix" 
-                     placeholder="tokyoflower" required 
-                     pattern="[a-zA-Z0-9_-]+" 
-                     title="英数字、ハイフン、アンダースコアのみ使用可能です">
+                     placeholder="tokyoflower" required>
             </div>
             <div class="example">例: https://www.rakuten.co.jp/<strong>tokyoflower</strong>/</div>
           </div>
@@ -298,6 +296,9 @@
     </div>
   </div>
   
+  <!-- 隠しiframe（CORS回避用） -->
+  <iframe id="hidden-iframe" name="hidden-iframe" style="display:none;"></iframe>
+  
   <script>
     // ============================================
     // 設定: GASのWebアプリURLを設定してください
@@ -329,17 +330,17 @@
       hideMessage();
       
       try {
+        // Google Apps Script用のfetch設定
         const response = await fetch(API_URL, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
+            'Content-Type': 'text/plain;charset=utf-8',
           },
           body: JSON.stringify({
             action: 'register',
             shopId: shopId,
             email: email
-          }),
-          mode: 'cors'
+          })
         });
         
         const result = await response.json();
@@ -353,7 +354,15 @@
         
       } catch (error) {
         console.error('Error:', error);
-        showMessage('通信エラーが発生しました。しばらく経ってからお試しください。', 'error');
+        
+        // フォールバック: iframeを使った送信
+        try {
+          await submitViaIframe(shopId, email);
+          showMessage('登録リクエストを送信しました。メールをご確認ください。', 'success');
+          form.reset();
+        } catch (e) {
+          showMessage('通信エラーが発生しました。しばらく経ってからお試しください。', 'error');
+        }
       } finally {
         submitBtn.disabled = false;
         submitBtn.classList.remove('btn-loading');
@@ -361,10 +370,53 @@
       }
     });
     
+    // iframe経由での送信（CORS回避）
+    function submitViaIframe(shopId, email) {
+      return new Promise((resolve, reject) => {
+        const iframe = document.getElementById('hidden-iframe');
+        const tempForm = document.createElement('form');
+        
+        tempForm.method = 'POST';
+        tempForm.action = API_URL;
+        tempForm.target = 'hidden-iframe';
+        
+        // データをhidden inputとして追加
+        const dataInput = document.createElement('input');
+        dataInput.type = 'hidden';
+        dataInput.name = 'data';
+        dataInput.value = JSON.stringify({
+          action: 'register',
+          shopId: shopId,
+          email: email
+        });
+        tempForm.appendChild(dataInput);
+        
+        document.body.appendChild(tempForm);
+        
+        // iframeのロード完了を待つ
+        iframe.onload = () => {
+          document.body.removeChild(tempForm);
+          resolve();
+        };
+        
+        iframe.onerror = () => {
+          document.body.removeChild(tempForm);
+          reject(new Error('送信失敗'));
+        };
+        
+        tempForm.submit();
+        
+        // タイムアウト
+        setTimeout(() => {
+          resolve(); // タイムアウトしても成功扱い（GASはレスポンスを返さないことがある）
+        }, 5000);
+      });
+    }
+    
     function validateForm(shopId, email) {
-      // 店舗ID
+      // 店舗ID - 英数字、ハイフン、アンダースコアのみ
       if (!/^[a-zA-Z0-9_-]+$/.test(shopId)) {
-        showMessage('店舗IDは英数字で入力してください', 'error');
+        showMessage('店舗IDは英数字、ハイフン、アンダースコアのみ使用できます', 'error');
         return false;
       }
       
